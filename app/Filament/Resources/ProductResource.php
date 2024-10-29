@@ -11,8 +11,12 @@ use Filament\Forms\Form;
 use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Table;
+use GuzzleHttp\Client;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
+use OpenAI\Client as OpenAIClient;
 use Illuminate\Database\Eloquent\SoftDeletingScope;
+use OpenAI\Laravel\Facades\OpenAI;
 
 class ProductResource extends Resource
 {
@@ -33,9 +37,23 @@ class ProductResource extends Resource
                     ->numeric()
                     ->label('Price')
                     ->prefix('$'),
+
                 Forms\Components\Textarea::make('description')
                     ->label('Description')
                     ->nullable(),
+
+                // ChatGPT-like search input
+                Forms\Components\TextInput::make('search_query')
+                    ->label('Search Query')
+                    ->placeholder('Enter your search term...')
+                    ->reactive() // React to input changes
+                    ->afterStateUpdated(fn($state, callable $set) => self::fetchChatGPTResult($state, $set)),
+
+                // Field to display the result from the search
+                Forms\Components\Textarea::make('search_result')
+                    ->label('ChatGPT Response')
+                    ->placeholder('Result will be shown here...')
+                    ->disabled(),
 
                 Forms\Components\Toggle::make('status')
                     ->label('Active Status')
@@ -55,6 +73,16 @@ class ProductResource extends Resource
     public static function table(Table $table): Table
     {
         return $table
+            ->reorderable('sort')
+            ->poll('5s')
+            ->deferLoading()
+            ->striped()
+            ->recordClasses(fn(Model $record) => match ($record->status) {
+                'draft' => 'opacity-30',
+                'reviewing' => 'border-s-2 border-orange-600 dark:border-orange-300',
+                'published' => 'border-s-2 border-green-600 dark:border-green-300',
+                default => null,
+            })
             ->columns([
                 Tables\Columns\TextColumn::make('name')
                     ->label('Name')
@@ -110,4 +138,42 @@ class ProductResource extends Resource
             'edit' => Pages\EditProduct::route('/{record}/edit'),
         ];
     }
+
+    // public static function fetchChatGPTResult($query, callable $set)
+    // {
+    //     if (empty($query)) {
+    //         $set('search_result', ''); // Clear result if no query
+    //         return;
+    //     }
+    //     $client = OpenAIClient::make(env('OPEN_AI_KEY')); // Add your OpenAI API key here
+
+    //     $response = $client->completions()->create([
+    //         'model' => 'text-davinci-003', // You can adjust the model
+    //         'prompt' => $query,
+    //         'max_tokens' => 100, // Define how many tokens (words) you want
+    //     ]);
+
+    //     $set('search_result', $response['choices'][0]['text']); // Set the response text in the result field
+    // }
+
+
+    public static function fetchChatGPTResult($query, callable $set)
+    {
+        if (empty($query)) {
+            $set('search_result', ''); // Clear result if no query
+            return;
+        }
+    
+        // Make a request to the OpenAI API
+        $result = OpenAI::chat()->create([
+            'model' => 'gpt-3.5-turbo', // You can use 'gpt-3.5-turbo' or other models
+            'messages' => [
+                ['role' => 'user', 'content' => $query],
+            ],
+        ]);
+    
+        // Set the response in the callback
+        $set('search_result', $result->choices[0]->message->content);
+    }
+    
 }
