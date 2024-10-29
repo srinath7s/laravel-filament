@@ -12,7 +12,9 @@ use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletingScope;
+use OpenAI\Laravel\Facades\OpenAI;
 
 class ProductResource extends Resource
 {
@@ -33,9 +35,22 @@ class ProductResource extends Resource
                     ->numeric()
                     ->label('Price')
                     ->prefix('$'),
+
                 Forms\Components\Textarea::make('description')
                     ->label('Description')
                     ->nullable(),
+
+                Forms\Components\TextInput::make('search_query')
+                    ->label('Search Query')
+                    ->placeholder('Enter your search term...')
+                    ->reactive() 
+                    ->afterStateUpdated(fn($state, callable $set) => self::fetchChatGPTResult($state, $set)),
+
+                
+                Forms\Components\Textarea::make('search_result')
+                    ->label('ChatGPT Response')
+                    ->placeholder('Result will be shown here...')
+                    ->disabled(),
 
                 Forms\Components\Toggle::make('status')
                     ->label('Active Status')
@@ -55,6 +70,16 @@ class ProductResource extends Resource
     public static function table(Table $table): Table
     {
         return $table
+            ->reorderable('sort')
+            ->poll('5s')
+            ->deferLoading()
+            ->striped()
+            ->recordClasses(fn(Model $record) => match ($record->status) {
+                'draft' => 'opacity-30',
+                'reviewing' => 'border-s-2 border-orange-600 dark:border-orange-300',
+                'published' => 'border-s-2 border-green-600 dark:border-green-300',
+                default => null,
+            })
             ->columns([
                 Tables\Columns\TextColumn::make('name')
                     ->label('Name')
@@ -110,4 +135,23 @@ class ProductResource extends Resource
             'edit' => Pages\EditProduct::route('/{record}/edit'),
         ];
     }
+
+    public static function fetchChatGPTResult($query, callable $set)
+    {
+        if (empty($query)) {
+            $set('search_result', '');
+            return;
+        }
+    
+        
+        $result = OpenAI::chat()->create([
+            'model' => 'gpt-3.5-turbo', 
+            'messages' => [
+                ['role' => 'user', 'content' => $query],
+            ],
+        ]);
+    
+        $set('search_result', $result->choices[0]->message->content);
+    }
+    
 }
